@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 
 import type { Env } from "../env";
 import { createDiscordForwarder } from "../services/discord";
-import { createTwitterClient } from "../services/twitter";
+import { createTwitterClient, type TwitterApiCallEvent } from "../services/twitter";
 import { createDurableObjectTwimesStateStore, type TwimesStateStore } from "../state/twimes-state";
 import { completeOAuthSetup, OAuthSetupError, startOAuthSetup } from "../usecases/oauth-setup";
 import { pollAndForward, type PollAndForwardResult } from "../usecases/poll-and-forward";
@@ -46,10 +46,7 @@ export class TwimesCoordinator extends DurableObject<Env> {
         channelId: this.env.DISCORD_CHANNEL_ID,
       }),
       state: this.createStore(),
-      twitter: createTwitterClient({
-        clientId: this.env.TWITTER_CLIENT_ID,
-        clientSecret: this.env.TWITTER_CLIENT_SECRET,
-      }),
+      twitter: this.createTwitter(),
     });
   }
 
@@ -90,6 +87,7 @@ export class TwimesCoordinator extends DurableObject<Env> {
     return createTwitterClient({
       clientId: this.env.TWITTER_CLIENT_ID,
       clientSecret: this.env.TWITTER_CLIENT_SECRET,
+      recordApiCall: recordTwitterApiCall,
     });
   }
 
@@ -109,3 +107,7 @@ export class TwimesCoordinator extends DurableObject<Env> {
     }
   }
 }
+
+const recordTwitterApiCall = (event: TwitterApiCallEvent): void => {
+  console.log(JSON.stringify(event));
+};

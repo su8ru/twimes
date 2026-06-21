@@ -11,6 +11,7 @@ export type TwitterClientConfig = {
   clientSecret: string;
   fetch?: typeof fetch;
   now?: () => number;
+  recordApiCall?: (event: TwitterApiCallEvent) => void;
 };
 
 export type AuthorizationRequest = {
@@ -33,19 +34,88 @@ export type TwitterService = {
   }) => Promise<Tweet[]>;
 };
 
+export type TwitterApiOperation =
+  | "exchange_authorization_code"
+  | "list_user_posts"
+  | "refresh_tokens";
+
+export type TwitterApiCallEvent = {
+  durationMs: number;
+  endpoint: string;
+  errorMessage?: string;
+  errorName?: string;
+  event: "x_api_call";
+  method: "GET" | "POST";
+  ok: boolean;
+  operation: TwitterApiOperation;
+  service: "x";
+  status?: number;
+};
+
 export const createTwitterClient = (config: TwitterClientConfig): TwitterService => {
   const clientFetch = config.fetch ?? fetch;
   const now = config.now ?? Date.now;
 
-  const requestToken = async (input: { body: Record<string, string> }): Promise<OAuthTokenSet> => {
+  const recordApiCall = (event: Omit<TwitterApiCallEvent, "event" | "service">): void => {
+    config.recordApiCall?.({
+      event: "x_api_call",
+      service: "x",
+      ...event,
+    });
+  };
+
+  const fetchTwitterApi = async (input: {
+    endpoint: string;
+    init?: RequestInit;
+    method: "GET" | "POST";
+    operation: TwitterApiOperation;
+    url: string | URL;
+  }): Promise<Response> => {
+    const startedAt = now();
+
+    try {
+      const response = await clientFetch(input.url, input.init);
+      recordApiCall({
+        durationMs: now() - startedAt,
+        endpoint: input.endpoint,
+        method: input.method,
+        ok: response.ok,
+        operation: input.operation,
+        status: response.status,
+      });
+      return response;
+    } catch (error) {
+      recordApiCall({
+        durationMs: now() - startedAt,
+        endpoint: input.endpoint,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorName: error instanceof Error ? error.name : undefined,
+        method: input.method,
+        ok: false,
+        operation: input.operation,
+      });
+      throw error;
+    }
+  };
+
+  const requestToken = async (input: {
+    body: Record<string, string>;
+    operation: Extract<TwitterApiOperation, "exchange_authorization_code" | "refresh_tokens">;
+  }): Promise<OAuthTokenSet> => {
     const body = new URLSearchParams(input.body);
-    const response = await clientFetch(TOKEN_URL, {
-      body,
-      headers: {
-        authorization: `Basic ${btoa(`${config.clientId}:${config.clientSecret}`)}`,
-        "content-type": "application/x-www-form-urlencoded",
+    const response = await fetchTwitterApi({
+      endpoint: "/2/oauth2/token",
+      init: {
+        body,
+        headers: {
+          authorization: `Basic ${btoa(`${config.clientId}:${config.clientSecret}`)}`,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        method: "POST",
       },
       method: "POST",
+      operation: input.operation,
+      url: TOKEN_URL,
     });
 
     if (!response.ok) {
@@ -94,6 +164,7 @@ export const createTwitterClient = (config: TwitterClientConfig): TwitterService
           grant_type: "authorization_code",
           redirect_uri: options.redirectUri,
         },
+        operation: "exchange_authorization_code",
       });
     },
 
@@ -103,6 +174,7 @@ export const createTwitterClient = (config: TwitterClientConfig): TwitterService
           grant_type: "refresh_token",
           refresh_token: refreshToken,
         },
+        operation: "refresh_tokens",
       });
     },
 
@@ -113,10 +185,16 @@ export const createTwitterClient = (config: TwitterClientConfig): TwitterService
         url.searchParams.set("since_id", options.sinceId);
       }
 
-      const response = await clientFetch(url, {
-        headers: {
-          authorization: `Bearer ${options.accessToken}`,
+      const response = await fetchTwitterApi({
+        endpoint: "/2/users/:id/tweets",
+        init: {
+          headers: {
+            authorization: `Bearer ${options.accessToken}`,
+          },
         },
+        method: "GET",
+        operation: "list_user_posts",
+        url,
       });
 
       if (!response.ok) {
