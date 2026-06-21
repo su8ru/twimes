@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createTwitterClient } from "../../src/services/twitter";
+import { createTwitterClient, type TwitterApiCallEvent } from "../../src/services/twitter";
 
 describe("createTwitterClient", () => {
   it("requests the user timeline with since_id and bearer auth", async () => {
@@ -29,6 +29,41 @@ describe("createTwitterClient", () => {
     expect(init?.headers).toEqual({
       authorization: "Bearer access-token",
     });
+  });
+
+  it("records a successful timeline API call", async () => {
+    let now = 1000;
+    const records: TwitterApiCallEvent[] = [];
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      now = 1250;
+      return jsonResponse({ data: [{ id: "12" }] });
+    });
+    const client = createTwitterClient({
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      fetch: fetchMock as typeof fetch,
+      now: () => now,
+      recordApiCall: (event) => records.push(event),
+    });
+
+    await client.listUserPosts({
+      accessToken: "access-token",
+      sinceId: "10",
+      userId: "user-id",
+    });
+
+    expect(records).toEqual([
+      {
+        durationMs: 250,
+        endpoint: "/2/users/:id/tweets",
+        event: "x_api_call",
+        method: "GET",
+        ok: true,
+        operation: "list_user_posts",
+        service: "x",
+        status: 200,
+      },
+    ]);
   });
 
   it("refreshes OAuth tokens with a form request", async () => {
@@ -69,7 +104,152 @@ describe("createTwitterClient", () => {
     expect(body.get("refresh_token")).toBe("old-refresh");
   });
 
+  it("records a successful token refresh API call", async () => {
+    let now = 1000;
+    const records: TwitterApiCallEvent[] = [];
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      now = 1100;
+      return jsonResponse({
+        access_token: "new-access",
+        expires_in: 7200,
+        refresh_token: "new-refresh",
+        token_type: "bearer",
+      });
+    });
+    const client = createTwitterClient({
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      fetch: fetchMock as typeof fetch,
+      now: () => now,
+      recordApiCall: (event) => records.push(event),
+    });
+
+    await client.refreshTokens("old-refresh");
+
+    expect(records).toEqual([
+      {
+        durationMs: 100,
+        endpoint: "/2/oauth2/token",
+        event: "x_api_call",
+        method: "POST",
+        ok: true,
+        operation: "refresh_tokens",
+        service: "x",
+        status: 200,
+      },
+    ]);
+  });
+
+  it("records a successful authorization code exchange API call", async () => {
+    const records: TwitterApiCallEvent[] = [];
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      jsonResponse({
+        access_token: "access-token",
+        expires_in: 7200,
+        refresh_token: "refresh-token",
+        token_type: "bearer",
+      }),
+    );
+    const client = createTwitterClient({
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      fetch: fetchMock as typeof fetch,
+      now: () => 1000,
+      recordApiCall: (event) => records.push(event),
+    });
+
+    await client.exchangeAuthorizationCode({
+      code: "code",
+      codeVerifier: "verifier",
+      redirectUri: "https://example.com/auth/callback",
+    });
+
+    expect(records).toEqual([
+      {
+        durationMs: 0,
+        endpoint: "/2/oauth2/token",
+        event: "x_api_call",
+        method: "POST",
+        ok: true,
+        operation: "exchange_authorization_code",
+        service: "x",
+        status: 200,
+      },
+    ]);
+  });
+
+  it("records a failed API response before throwing", async () => {
+    const records: TwitterApiCallEvent[] = [];
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response("rate limited", { status: 429 }),
+    );
+    const client = createTwitterClient({
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      fetch: fetchMock as typeof fetch,
+      now: () => 1000,
+      recordApiCall: (event) => records.push(event),
+    });
+
+    await expect(
+      client.listUserPosts({
+        accessToken: "access-token",
+        userId: "user-id",
+      }),
+    ).rejects.toThrow("Twitter timeline request failed: 429 rate limited");
+
+    expect(records).toEqual([
+      {
+        durationMs: 0,
+        endpoint: "/2/users/:id/tweets",
+        event: "x_api_call",
+        method: "GET",
+        ok: false,
+        operation: "list_user_posts",
+        service: "x",
+        status: 429,
+      },
+    ]);
+  });
+
+  it("records a failed fetch before rethrowing", async () => {
+    const records: TwitterApiCallEvent[] = [];
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      throw new TypeError("network failed");
+    });
+    const client = createTwitterClient({
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      fetch: fetchMock as typeof fetch,
+      now: () => 1000,
+      recordApiCall: (event) => records.push(event),
+    });
+
+    await expect(
+      client.listUserPosts({
+        accessToken: "access-token",
+        userId: "user-id",
+      }),
+    ).rejects.toThrow("network failed");
+
+    expect(records).toEqual([
+      {
+        durationMs: 0,
+        endpoint: "/2/users/:id/tweets",
+        errorMessage: "network failed",
+        errorName: "TypeError",
+        event: "x_api_call",
+        method: "GET",
+        ok: false,
+        operation: "list_user_posts",
+        service: "x",
+      },
+    ]);
+  });
+
   it("builds an OAuth authorization URL and setup state", async () => {
+    const records: TwitterApiCallEvent[] = [];
     const client = createTwitterClient({
       clientId: "client-id",
       clientSecret: "client-secret",
@@ -77,6 +257,7 @@ describe("createTwitterClient", () => {
         async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(),
       ) as typeof fetch,
       now: () => 1000,
+      recordApiCall: (event) => records.push(event),
     });
 
     const request = await client.createAuthorizationRequest("https://example.com/auth/callback");
@@ -91,6 +272,34 @@ describe("createTwitterClient", () => {
     expect(url.searchParams.get("state")).toBe(request.setupState.state);
     expect(request.setupState.createdAt).toBe(1000);
     expect(request.setupState.codeVerifier.length).toBeGreaterThan(20);
+    expect(records).toEqual([]);
+  });
+
+  it("does not include secrets in recorded API call events", async () => {
+    const records: TwitterApiCallEvent[] = [];
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      jsonResponse({
+        access_token: "new-access",
+        expires_in: 7200,
+        refresh_token: "new-refresh",
+        token_type: "bearer",
+      }),
+    );
+    const client = createTwitterClient({
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      fetch: fetchMock as typeof fetch,
+      now: () => 1000,
+      recordApiCall: (event) => records.push(event),
+    });
+
+    await client.refreshTokens("old-refresh");
+
+    const serializedRecords = JSON.stringify(records);
+    expect(serializedRecords).not.toContain("new-access");
+    expect(serializedRecords).not.toContain("new-refresh");
+    expect(serializedRecords).not.toContain("old-refresh");
+    expect(serializedRecords).not.toContain("client-secret");
   });
 });
 
