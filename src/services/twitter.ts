@@ -1,9 +1,9 @@
 import type { OAuthSetupState, OAuthTokenSet } from "../domain/oauth";
 import type { Tweet } from "../domain/tweet";
 
-const AUTHORIZE_URL = "https://twitter.com/i/oauth2/authorize";
-const TOKEN_URL = "https://api.twitter.com/2/oauth2/token";
-const API_BASE_URL = "https://api.twitter.com";
+const AUTHORIZE_URL = "https://x.com/i/oauth2/authorize";
+const TOKEN_URL = "https://api.x.com/2/oauth2/token";
+const API_BASE_URL = "https://api.x.com";
 const OAUTH_SCOPES = ["tweet.read", "users.read", "offline.access"] as const;
 
 export type TwitterClientConfig = {

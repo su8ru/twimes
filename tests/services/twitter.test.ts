@@ -92,7 +92,7 @@ describe("createTwitterClient", () => {
     });
 
     const [requestUrl, init] = fetchMock.mock.calls[0]!;
-    expect(toRequestUrlString(requestUrl)).toBe("https://api.twitter.com/2/oauth2/token");
+    expect(toRequestUrlString(requestUrl)).toBe("https://api.x.com/2/oauth2/token");
     expect(init?.method).toBe("POST");
     expect(init?.headers).toEqual({
       authorization: `Basic ${btoa("client-id:client-secret")}`,
@@ -263,7 +263,7 @@ describe("createTwitterClient", () => {
     const request = await client.createAuthorizationRequest("https://example.com/auth/callback");
     const url = new URL(request.url);
 
-    expect(url.origin + url.pathname).toBe("https://twitter.com/i/oauth2/authorize");
+    expect(url.origin + url.pathname).toBe("https://x.com/i/oauth2/authorize");
     expect(url.searchParams.get("response_type")).toBe("code");
     expect(url.searchParams.get("client_id")).toBe("client-id");
     expect(url.searchParams.get("redirect_uri")).toBe("https://example.com/auth/callback");
