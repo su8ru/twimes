@@ -31,6 +31,27 @@ describe("createTwitterClient", () => {
     });
   });
 
+  it("uses the minimum timeline page size when no since_id exists", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      jsonResponse({ data: [{ id: "12" }] }),
+    );
+    const client = createTwitterClient({
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      fetch: fetchMock as typeof fetch,
+    });
+
+    await client.listUserPosts({
+      accessToken: "access-token",
+      userId: "user-id",
+    });
+
+    const [requestUrl] = fetchMock.mock.calls[0]!;
+    const url = new URL(toRequestUrlString(requestUrl));
+    expect(url.searchParams.has("since_id")).toBe(false);
+    expect(url.searchParams.get("max_results")).toBe("5");
+  });
+
   it("records a successful timeline API call", async () => {
     let now = 1000;
     const records: TwitterApiCallEvent[] = [];

@@ -5,6 +5,8 @@ const AUTHORIZE_URL = "https://x.com/i/oauth2/authorize";
 const TOKEN_URL = "https://api.x.com/2/oauth2/token";
 const API_BASE_URL = "https://api.x.com";
 const OAUTH_SCOPES = ["tweet.read", "users.read", "offline.access"] as const;
+const INITIAL_TIMELINE_MAX_RESULTS = "5";
+const INCREMENTAL_TIMELINE_MAX_RESULTS = "100";
 
 export type TwitterClientConfig = {
   clientId: string;
@@ -196,7 +198,12 @@ export const createTwitterClient = (config: TwitterClientConfig): TwitterService
       const endpoint = "/2/users/:id/tweets";
       const method = "GET";
       const url = new URL(`/2/users/${options.userId}/tweets`, API_BASE_URL);
-      url.searchParams.set("max_results", "100");
+      url.searchParams.set(
+        "max_results",
+        options.sinceId === undefined
+          ? INITIAL_TIMELINE_MAX_RESULTS
+          : INCREMENTAL_TIMELINE_MAX_RESULTS,
+      );
       if (options.sinceId !== undefined) {
         url.searchParams.set("since_id", options.sinceId);
       }
