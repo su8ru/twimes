@@ -1,0 +1,38 @@
+{
+  "name": "twimes",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Forward posts from a Twitter account to Discord.",
+  "license": "MIT",
+  "author": "NISHIZAWA Shuntaro <me@s2n.tech>",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --test-scheduled",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "wrangler:types": "wrangler types --env-interface CloudflareEnv"
+  },
+  "dependencies": {
+    "@discordjs/rest": "2.6.1",
+    "discord-api-types": "0.38.48",
+    "hono": "4.12.25"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "4.20260613.1",
+    "@tsconfig/node-lts": "24.0.0",
+    "@tsconfig/strictest": "2.0.8",
+    "@types/node": "25.9.3",
+    "oxfmt": "0.54.0",
+    "oxlint": "1.69.0",
+    "oxlint-tsgolint": "0.23.0",
+    "prettier": "3.8.4",
+    "typescript": "6.0.3",
+    "vitest": "4.1.8",
+    "wrangler": "4.100.0"
+  },
+  "packageManager": "pnpm@11.6.0"
+}

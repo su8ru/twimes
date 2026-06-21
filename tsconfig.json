@@ -1,0 +1,12 @@
+{
+  "extends": ["@tsconfig/node-lts/tsconfig.json", "@tsconfig/strictest/tsconfig.json"],
+  "compilerOptions": {
+    "exactOptionalPropertyTypes": false,
+    "lib": ["ES2023", "WebWorker"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["@cloudflare/workers-types", "vitest/globals"],
+    "verbatimModuleSyntax": true
+  },
+  "include": ["src", "tests", "vitest.config.ts", "worker-configuration.d.ts"]
+}
