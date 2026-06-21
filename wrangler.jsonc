@@ -1,0 +1,35 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "twimes",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-14",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+    },
+  },
+  "triggers": {
+    "crons": ["* * * * *"],
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "TWIMES_COORDINATOR",
+        "class_name": "TwimesCoordinator",
+      },
+    ],
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["TwimesCoordinator"],
+    },
+  ],
+  "vars": {
+    "DISCORD_CHANNEL_ID": "",
+    "TWITTER_USER_ID": "",
+    "TWITTER_USERNAME": "",
+  },
+}
