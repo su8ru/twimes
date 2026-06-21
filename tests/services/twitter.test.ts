@@ -57,10 +57,88 @@ describe("createTwitterClient", () => {
         durationMs: 250,
         endpoint: "/2/users/:id/tweets",
         event: "x_api_call",
+        fetchedCount: 1,
+        message: "X API call completed",
         method: "GET",
         ok: true,
         operation: "list_user_posts",
         service: "x",
+        sinceId: "10",
+        status: 200,
+      },
+    ]);
+  });
+
+  it("records zero fetched tweets when the timeline response has no data", async () => {
+    const records: TwitterApiCallEvent[] = [];
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      jsonResponse({}),
+    );
+    const client = createTwitterClient({
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      fetch: fetchMock as typeof fetch,
+      now: () => 1000,
+      recordApiCall: (event) => records.push(event),
+    });
+
+    await expect(
+      client.listUserPosts({
+        accessToken: "access-token",
+        userId: "user-id",
+      }),
+    ).resolves.toEqual([]);
+
+    expect(records).toEqual([
+      {
+        durationMs: 0,
+        endpoint: "/2/users/:id/tweets",
+        event: "x_api_call",
+        fetchedCount: 0,
+        message: "X API call completed",
+        method: "GET",
+        ok: true,
+        operation: "list_user_posts",
+        service: "x",
+        status: 200,
+      },
+    ]);
+  });
+
+  it("records a failed timeline response parse before throwing", async () => {
+    const records: TwitterApiCallEvent[] = [];
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      jsonResponse({ data: "not-an-array" }),
+    );
+    const client = createTwitterClient({
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      fetch: fetchMock as typeof fetch,
+      now: () => 1000,
+      recordApiCall: (event) => records.push(event),
+    });
+
+    await expect(
+      client.listUserPosts({
+        accessToken: "access-token",
+        sinceId: "10",
+        userId: "user-id",
+      }),
+    ).rejects.toThrow("Twitter timeline response data was not an array.");
+
+    expect(records).toEqual([
+      {
+        durationMs: 0,
+        endpoint: "/2/users/:id/tweets",
+        errorMessage: "Twitter timeline response data was not an array.",
+        errorName: "Error",
+        event: "x_api_call",
+        message: "X API call failed",
+        method: "GET",
+        ok: false,
+        operation: "list_user_posts",
+        service: "x",
+        sinceId: "10",
         status: 200,
       },
     ]);
@@ -131,6 +209,7 @@ describe("createTwitterClient", () => {
         durationMs: 100,
         endpoint: "/2/oauth2/token",
         event: "x_api_call",
+        message: "X API call completed",
         method: "POST",
         ok: true,
         operation: "refresh_tokens",
@@ -169,6 +248,7 @@ describe("createTwitterClient", () => {
         durationMs: 0,
         endpoint: "/2/oauth2/token",
         event: "x_api_call",
+        message: "X API call completed",
         method: "POST",
         ok: true,
         operation: "exchange_authorization_code",
@@ -195,6 +275,7 @@ describe("createTwitterClient", () => {
     await expect(
       client.listUserPosts({
         accessToken: "access-token",
+        sinceId: "10",
         userId: "user-id",
       }),
     ).rejects.toThrow("Twitter timeline request failed: 429 rate limited");
@@ -204,10 +285,12 @@ describe("createTwitterClient", () => {
         durationMs: 0,
         endpoint: "/2/users/:id/tweets",
         event: "x_api_call",
+        message: "X API call failed",
         method: "GET",
         ok: false,
         operation: "list_user_posts",
         service: "x",
+        sinceId: "10",
         status: 429,
       },
     ]);
@@ -229,6 +312,7 @@ describe("createTwitterClient", () => {
     await expect(
       client.listUserPosts({
         accessToken: "access-token",
+        sinceId: "10",
         userId: "user-id",
       }),
     ).rejects.toThrow("network failed");
@@ -240,10 +324,12 @@ describe("createTwitterClient", () => {
         errorMessage: "network failed",
         errorName: "TypeError",
         event: "x_api_call",
+        message: "X API call failed",
         method: "GET",
         ok: false,
         operation: "list_user_posts",
         service: "x",
+        sinceId: "10",
       },
     ]);
   });

@@ -45,10 +45,13 @@ export type TwitterApiCallEvent = {
   errorMessage?: string;
   errorName?: string;
   event: "x_api_call";
+  fetchedCount?: number;
+  message: string;
   method: "GET" | "POST";
   ok: boolean;
   operation: TwitterApiOperation;
   service: "x";
+  sinceId?: string;
   status?: number;
 };
 
@@ -56,9 +59,12 @@ export const createTwitterClient = (config: TwitterClientConfig): TwitterService
   const clientFetch = config.fetch ?? fetch;
   const now = config.now ?? Date.now;
 
-  const recordApiCall = (event: Omit<TwitterApiCallEvent, "event" | "service">): void => {
+  const recordApiCall = (
+    event: Omit<TwitterApiCallEvent, "event" | "message" | "service">,
+  ): void => {
     config.recordApiCall?.({
       event: "x_api_call",
+      message: event.ok ? "X API call completed" : "X API call failed",
       service: "x",
       ...event,
     });
@@ -69,21 +75,17 @@ export const createTwitterClient = (config: TwitterClientConfig): TwitterService
     init?: RequestInit;
     method: "GET" | "POST";
     operation: TwitterApiOperation;
+    sinceId?: string;
     url: string | URL;
-  }): Promise<Response> => {
+  }): Promise<{ durationMs: number; response: Response }> => {
     const startedAt = now();
 
     try {
       const response = await clientFetch(input.url, input.init);
-      recordApiCall({
+      return {
         durationMs: now() - startedAt,
-        endpoint: input.endpoint,
-        method: input.method,
-        ok: response.ok,
-        operation: input.operation,
-        status: response.status,
-      });
-      return response;
+        response,
+      };
     } catch (error) {
       recordApiCall({
         durationMs: now() - startedAt,
@@ -93,6 +95,7 @@ export const createTwitterClient = (config: TwitterClientConfig): TwitterService
         method: input.method,
         ok: false,
         operation: input.operation,
+        sinceId: input.sinceId,
       });
       throw error;
     }
@@ -103,19 +106,30 @@ export const createTwitterClient = (config: TwitterClientConfig): TwitterService
     operation: Extract<TwitterApiOperation, "exchange_authorization_code" | "refresh_tokens">;
   }): Promise<OAuthTokenSet> => {
     const body = new URLSearchParams(input.body);
-    const response = await fetchTwitterApi({
-      endpoint: "/2/oauth2/token",
+    const endpoint = "/2/oauth2/token";
+    const method = "POST";
+    const { durationMs, response } = await fetchTwitterApi({
+      endpoint,
       init: {
         body,
         headers: {
           authorization: `Basic ${btoa(`${config.clientId}:${config.clientSecret}`)}`,
           "content-type": "application/x-www-form-urlencoded",
         },
-        method: "POST",
+        method,
       },
-      method: "POST",
+      method,
       operation: input.operation,
       url: TOKEN_URL,
+    });
+
+    recordApiCall({
+      durationMs,
+      endpoint,
+      method,
+      ok: response.ok,
+      operation: input.operation,
+      status: response.status,
     });
 
     if (!response.ok) {
@@ -179,32 +193,72 @@ export const createTwitterClient = (config: TwitterClientConfig): TwitterService
     },
 
     listUserPosts: async (options) => {
+      const endpoint = "/2/users/:id/tweets";
+      const method = "GET";
       const url = new URL(`/2/users/${options.userId}/tweets`, API_BASE_URL);
       url.searchParams.set("max_results", "100");
       if (options.sinceId !== undefined) {
         url.searchParams.set("since_id", options.sinceId);
       }
 
-      const response = await fetchTwitterApi({
-        endpoint: "/2/users/:id/tweets",
+      const { durationMs, response } = await fetchTwitterApi({
+        endpoint,
         init: {
           headers: {
             authorization: `Bearer ${options.accessToken}`,
           },
         },
-        method: "GET",
+        method,
         operation: "list_user_posts",
+        sinceId: options.sinceId,
         url,
       });
 
       if (!response.ok) {
+        recordApiCall({
+          durationMs,
+          endpoint,
+          method,
+          ok: false,
+          operation: "list_user_posts",
+          sinceId: options.sinceId,
+          status: response.status,
+        });
         throw new Error(
           `Twitter timeline request failed: ${response.status} ${await response.text()}`,
         );
       }
 
-      const body = asTimelineResponse(await response.json());
-      return body.data?.map((tweet) => ({ id: tweet.id })) ?? [];
+      let body: TimelineResponse;
+      try {
+        body = asTimelineResponse(await response.json());
+      } catch (error) {
+        recordApiCall({
+          durationMs,
+          endpoint,
+          errorMessage: error instanceof Error ? error.message : String(error),
+          errorName: error instanceof Error ? error.name : undefined,
+          method,
+          ok: false,
+          operation: "list_user_posts",
+          sinceId: options.sinceId,
+          status: response.status,
+        });
+        throw error;
+      }
+
+      const tweets = body.data?.map((tweet) => ({ id: tweet.id })) ?? [];
+      recordApiCall({
+        durationMs,
+        endpoint,
+        fetchedCount: tweets.length,
+        method,
+        ok: true,
+        operation: "list_user_posts",
+        sinceId: options.sinceId,
+        status: response.status,
+      });
+      return tweets;
     },
   };
 };
