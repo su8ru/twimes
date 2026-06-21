@@ -57,3 +57,16 @@ curl "http://localhost:8787/cdn-cgi/handler/scheduled?format=json"
 ```
 
 OAuth token が未設定の場合、scheduled route は `Twitter OAuth tokens are not configured` で失敗します。
+
+## Observability
+
+Workers Logs / Query Builder で `event = "x_api_call"` を検索すると、X API 呼び出しを確認できます。
+
+主な絞り込み:
+
+- `operation = "list_user_posts"`: polling の user posts timeline 取得
+- `operation = "refresh_tokens"`: OAuth token refresh
+- `operation = "exchange_authorization_code"`: 初回 OAuth callback の token exchange
+- `ok = false`: 失敗した X API 呼び出し
+
+ログには status、durationMs、endpoint を出します。access token、refresh token、client secret、OAuth code は出しません。
