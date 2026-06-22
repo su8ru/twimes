@@ -9,6 +9,7 @@ const app = new Hono<{ Bindings: Env }>();
 
 app.get("/", (c) => c.text("ok"));
 
+app.get("/alarm", async (c) => await forwardToCoordinator(c.env, c.req.raw));
 app.get("/auth/start", async (c) => await forwardToCoordinator(c.env, c.req.raw));
 app.get("/auth/callback", async (c) => await forwardToCoordinator(c.env, c.req.raw));
 
@@ -23,7 +24,9 @@ export default {
     );
 
     if (!response.ok) {
-      throw new Error(`Scheduled polling failed: ${response.status} ${await response.text()}`);
+      throw new Error(
+        `Scheduled alarm watchdog failed: ${response.status} ${await response.text()}`,
+      );
     }
   },
 } satisfies ExportedHandler<Env>;

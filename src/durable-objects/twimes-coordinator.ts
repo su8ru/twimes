@@ -7,19 +7,48 @@ import { createDurableObjectTwimesStateStore, type TwimesStateStore } from "../s
 import { completeOAuthSetup, OAuthSetupError, startOAuthSetup } from "../usecases/oauth-setup";
 import { pollAndForward, type PollAndForwardResult } from "../usecases/poll-and-forward";
 
+import {
+  ensurePollingAlarm,
+  scheduleNextPollingAlarm,
+  type AlarmWatchdogResult,
+} from "./alarm-scheduler";
+
 const TOKEN_REFRESH_BEFORE_MS = 60 * 1000;
 
 export class TwimesCoordinator extends DurableObject<Env> {
   private runningPoll: Promise<PollAndForwardResult> | undefined;
 
+  override async alarm(): Promise<void> {
+    await scheduleNextPollingAlarm({
+      now: Date.now,
+      storage: this.ctx.storage,
+    });
+
+    try {
+      await this.runPoll();
+    } catch (error) {
+      recordAlarmEvent({
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorName: error instanceof Error ? error.name : undefined,
+        ok: false,
+      });
+    } finally {
+      await scheduleNextPollingAlarm({
+        now: Date.now,
+        storage: this.ctx.storage,
+      });
+    }
+  }
+
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
     if (request.method === "POST" && url.pathname === "/scheduled") {
-      this.runningPoll ??= this.handleScheduled().finally(() => {
-        this.runningPoll = undefined;
-      });
-      return Response.json(await this.runningPoll);
+      return Response.json(await this.ensurePollingAlarm());
+    }
+
+    if (request.method === "GET" && url.pathname === "/alarm") {
+      return Response.json(await this.ensurePollingAlarm());
     }
 
     if (request.method === "GET" && url.pathname === "/auth/start") {
@@ -33,7 +62,7 @@ export class TwimesCoordinator extends DurableObject<Env> {
     return new Response("Not found", { status: 404 });
   }
 
-  private async handleScheduled(): Promise<PollAndForwardResult> {
+  private async handlePoll(): Promise<PollAndForwardResult> {
     return await pollAndForward({
       config: {
         now: Date.now,
@@ -75,8 +104,33 @@ export class TwimesCoordinator extends DurableObject<Env> {
         twitter: this.createTwitter(),
       });
 
+      await this.ensurePollingAlarm();
+
       return new Response("Twitter OAuth setup completed.");
     });
+  }
+
+  private async ensurePollingAlarm(): Promise<AlarmWatchdogResult> {
+    return await ensurePollingAlarm({
+      isPolling: this.runningPoll !== undefined,
+      now: Date.now,
+      storage: this.ctx.storage,
+    });
+  }
+
+  private async runPoll(): Promise<PollAndForwardResult> {
+    if (this.runningPoll !== undefined) {
+      return await this.runningPoll;
+    }
+
+    const poll = this.handlePoll();
+    this.runningPoll = poll;
+
+    try {
+      return await poll;
+    } finally {
+      this.runningPoll = undefined;
+    }
   }
 
   private createStore(): TwimesStateStore {
@@ -110,4 +164,19 @@ export class TwimesCoordinator extends DurableObject<Env> {
 
 const recordTwitterApiCall = (event: TwitterApiCallEvent): void => {
   console.log(JSON.stringify(event));
+};
+
+const recordAlarmEvent = (event: {
+  errorMessage?: string;
+  errorName?: string;
+  ok: boolean;
+}): void => {
+  console.log(
+    JSON.stringify({
+      event: "alarm_poll",
+      message: event.ok ? "Alarm polling completed" : "Alarm polling failed",
+      service: "twimes",
+      ...event,
+    }),
+  );
 };
