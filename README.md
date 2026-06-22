@@ -2,7 +2,7 @@
 
 ## Overview
 
-`twimes` は、X の指定ユーザーの投稿を 1 分ごとに取得し、Discord チャンネルへ転送する **Cloudflare Workers** アプリです。
+`twimes` は、X の指定ユーザーの投稿を 30 秒ごとに取得し、Discord チャンネルへ転送する **Cloudflare Workers** アプリです。
 
 X API から `/2/users/:id/tweets` を読み、Discord には `fixupx.com` の投稿 URL を送ります。
 
@@ -76,7 +76,8 @@ open "http://localhost:8787/auth/start?token=<SETUP_TOKEN>"
 
 本番では、deploy 後の Worker URL で同じ endpoint を開きます。
 
-OAuth token が未設定の場合、scheduled event は `Twitter OAuth tokens are not configured. Open /auth/start first.` で失敗します。
+OAuth token が未設定の場合、alarm による polling は `Twitter OAuth tokens are not configured. Open /auth/start first.` で失敗します。
+失敗後も次回 alarm は予約されるため、OAuth setup の完了後に polling が再開します。
 
 ## Operations
 
@@ -91,9 +92,20 @@ pnpm lint
 pnpm format:check
 ```
 
-### Manual polling
+### Alarm watchdog
 
-ローカルで scheduled event を手動実行：
+`GET /alarm` は Durable Object alarm の状態を確認します。
+alarm が未設定で、かつ polling 実行中でなければ、1 秒後の alarm を予約します。
+この endpoint は直接 polling しません。
+
+ローカルで alarm watchdog を手動実行：
+
+```bash
+pnpm dev
+curl "http://localhost:8787/alarm"
+```
+
+Cloudflare の scheduled event も同じ watchdog を実行します。
 
 ```bash
 pnpm dev
@@ -118,20 +130,28 @@ curl "http://localhost:8787/cdn-cgi/handler/scheduled?format=json"
 
 ### Architecture
 
-- **Coordinator**：`idFromName("default")` で取得した `TwimesCoordinator` に、OAuth endpoint と scheduled event を転送します。
+- **Coordinator**：`idFromName("default")` で取得した `TwimesCoordinator` に、OAuth endpoint、alarm watchdog、scheduled event を転送します。
 - **Storage**：OAuth token、OAuth setup state、最後に処理した投稿 ID は、同じ Durable Object storage に保存します。
-- **Trigger**：起動契機は Workers Cron Trigger で、Durable Object alarm は使っていません。
+- **Trigger**：通常の polling は Durable Object alarm で起動します。
+- **Watchdog**：Workers Cron Trigger と `GET /alarm` は alarm が未設定になった場合だけ再起動します。
 - **Scope**：単一の X アカウントを単一の Discord チャンネルへ転送する構成で、shard 構成ではありません。
 
 `wrangler.jsonc` の cron は `* * * * *` です。
+この cron は polling そのものではなく、alarm の watchdog として使います。
 
 ### Polling flow
 
-scheduled event は Worker の `scheduled` handler で受け取り、内部リクエストとして `POST /scheduled` を `TwimesCoordinator` へ送ります。
+polling は `TwimesCoordinator` の `alarm()` handler で実行します。
+`alarm()` handler は開始時に次回 alarm を仮予約し、polling の完了後に 30 秒後の alarm を予約し直します。
+
+scheduled event と `GET /alarm` は watchdog です。
+watchdog は `runningPoll` を先に確認し、polling 実行中なら `getAlarm()` を呼ばずに終了します。
+polling 実行中でない場合だけ `getAlarm()` を確認し、alarm が未設定なら 1 秒後の alarm を予約します。
 
 ```mermaid
 sequenceDiagram
   participant Cron as Cron Trigger
+  participant Browser as Operator
   participant Worker as Cloudflare Worker
   participant Coordinator as TwimesCoordinator
   participant Storage as Durable Object Storage
@@ -140,6 +160,15 @@ sequenceDiagram
 
   Cron->>Worker: scheduled event
   Worker->>Coordinator: POST /scheduled
+  Browser->>Worker: GET /alarm
+  Worker->>Coordinator: GET /alarm
+  Coordinator->>Storage: getAlarm if no running poll
+  opt alarm missing
+    Coordinator->>Storage: set alarm after 1 second
+  end
+
+  Storage-->>Coordinator: alarm fires
+  Coordinator->>Storage: set provisional alarm after 30 seconds
   Coordinator->>Storage: read oauthTokens
   opt token expiring
     Coordinator->>XAPI: refresh token
@@ -153,11 +182,15 @@ sequenceDiagram
     Coordinator->>Discord: send tweet URL
     Coordinator->>Storage: save lastSeenPostId
   end
-  Coordinator-->>Worker: polling result
+  Coordinator->>Storage: set next alarm after 30 seconds
 ```
 
 Coordinator は `runningPoll` に実行中の Promise を保持します。
 同じ instance 内で polling が重なった場合は、新しい polling を始めず、実行中の結果へ合流します。
+
+Cloudflare の alarm は、handler 実行中に次回 alarm が未設定なら `getAlarm()` が `null` を返します。
+そのため、watchdog は `runningPoll` を先に確認します。
+alarm handler は開始時にも次回 alarm を仮予約し、`getAlarm()` だけに依存しない重複防止にしています。
 
 access token は、期限まで 60 秒以内なら refresh token で更新します。
 
